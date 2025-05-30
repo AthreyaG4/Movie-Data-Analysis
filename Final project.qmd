@@ -1,0 +1,871 @@
+---
+title: "Final Project - 24215882"
+format: pdf
+editor: visual
+---
+
+# Task 1: Analysis
+
+## Library Imports
+
+```{r, results='hide',message=FALSE, warning=FALSE}
+library(readr)
+library(dplyr)
+library(skimr)
+library(purrr)
+library(stringr)
+library(ggplot2)
+library(tidyverse)
+library(DataExplorer)
+```
+
+## Data
+
+This project uses data from IMDb, including the following datasets: `title.basics.tsv`, `title.crew.tsv`, `title.ratings.tsv`, and `name.basics.tsv`. These datasets were retrieved from IMDb's official database export service, accessible at <https://developer.imdb.com/non-commercial-datasets/>.
+
+## Importing Data
+
+The dataset is split up into different parts. Importing all the different parts here using `read_tsv()`**.**
+
+`title_filtered`: contains filtered data from 2000 - 2024 for movies and TV-series.
+
+**`title_crew`:** has crew information for the titles.
+
+**`title_rating`:** has rating information for the titles.
+
+**`names`:** has information about the directors and writers like their primary profession.
+
+```{r, results='hide',message=FALSE, warning=FALSE}
+title = read_tsv("title.basics.tsv", show_col_types = FALSE)
+
+title_filtered = title |>
+  filter(startYear >= 2000 & 
+           startYear < 2025 & 
+           (titleType == "movie" | titleType == "tvSeries")) |>
+  arrange(startYear)
+
+title_crew = read_tsv("title.crew.tsv", show_col_types = FALSE)
+title_crew = title_crew[,1:2]
+
+title_ratings = read_tsv("title.ratings.tsv", show_col_types = FALSE)
+
+names = read_tsv("name.basics.tsv", show_col_types = FALSE)
+names = names[,1:2]
+```
+
+## Joining Data
+
+The data needs to be combined together to get the information we need.
+
+This is done using **`left_join()`** combining with **`mutate()`** and **`rename()`** functions from **`dplyr`**.
+
+```{r}
+title_combined = title_filtered |>
+  left_join(title_ratings, join_by(tconst)) |>
+  left_join(title_crew,join_by(tconst)) |>
+  mutate(directors = map_chr(str_split(directors,","),1)) |>
+  rename(nconst = directors) |>
+  left_join(names,join_by(nconst)) |>
+  select(-nconst) |>
+  rename(director_name = primaryName) |>
+  filter(numVotes > 300)
+
+head(title_combined,5)
+```
+
+## Basic Data Exploration
+
+### 1. Replacing //N with Local R NA
+
+There are NA values indicated by //N in the dataset. Replacing them with the local R NA might be useful.
+
+```{r}
+title_combined[title_combined == "\\N"] = NA
+```
+
+### 2. Factors
+
+The `startYear`, `endYear`, `titleType` and the `isAdult` columns can be converted to factors with specific levels. These will be our categorical variables.
+
+```{r}
+title_combined$titleType = factor(title_combined$titleType)
+title_combined$startYear = factor(title_combined$startYear,ordered = TRUE)
+title_combined$isAdult = factor(title_combined$isAdult)
+title_combined$endYear = factor(title_combined$endYear, ordered = TRUE)
+
+print(levels(title_combined$titleType))
+print(levels(title_combined$startYear))
+print(levels(title_combined$isAdult))
+print(levels(title_combined$endYear))
+```
+
+### 3. Datatype for the run-time variable
+
+The datatype for the run-time variable seems to be of character type. This is better used as a numeric datatype. Using **`as.numeric()`** for conversion.
+
+```{r}
+title_combined$runtimeMinutes = as.numeric(title_combined$runtimeMinutes)
+```
+
+### 4. Removing NAs
+
+The columns `averageRating`, `numVotes`, `director_name`, `runtimeMinutes` and `genres` have NA values which needs to be removed. Using the **`filter()`** function to remove NA in these columns. The `endYear` column also has NA values but these can actually take NAs since movies dont have an end year value. These are only relevant for tv-series. We can filter them out later.
+
+```{r}
+title_combined = title_combined |>
+  filter(!is.na(averageRating) &
+           !is.na(numVotes) &
+           !is.na(director_name) &
+           !is.na(runtimeMinutes) &
+           !is.na(genres))
+```
+
+### 5. Splitting Data
+
+The analysis will make more sense if we do separate analysis for movies and tv-series. We split the cleaned up data into two separates datasets, one for movies and one for tv-series. The end year is no longer relevant for the movies datasets. So using **`select()`** to remove the column. The tv-series dataset needs to be further cleaned to remove the NAs in the `endYear` column. This is done by combining `!is.na()` with filter.
+
+```{r}
+tvSeries = title_combined |>
+  filter(titleType == "tvSeries" & !is.na(endYear))
+
+movies = title_combined |>
+  filter(titleType == "movie") |>
+  select(-endYear)
+```
+
+### 6. Summary
+
+`skim_without_charts()` gives a quick overview of the types of columns we have, and their information.
+
+```{r}
+skim_without_charts(movies)
+```
+
+The movies dataset has 11 columns and 52217 rows of data.
+
+```{r}
+skim_without_charts(tvSeries)
+```
+
+The tvSeries dataset has 12 columns and 7453 rows.
+
+##### **Column Details:**
+
+1.  There are 7 character columns.
+2.  There are 2 numeric columns.
+3.  There are 3 factors (2 for movies dataset).
+
+##### **Column descriptions:**
+
+1.  tconst: Unique identifier for the title. This is of type character.
+2.  titleType: type of the title. Has two values either movies or tvseries. This is a factor.
+3.  primaryTitle: name of the title localized. This is a character type.
+4.  originalTitle: name of the original title. This is a character type.
+5.  isAdult: tell if a movie is adult rated or not. This is a factor.
+6.  startYear: year when the movie was released or when a tvSeries started airing. This is a factor.
+7.  endYear: year when the tvSeries ended. This is a factor. Relevant only for tvSeries.
+8.  runtimeMinutes: run time for the title. This is a numeric datatype.
+9.  genres: the genres for the title. This is of type character.
+10. averageRating: the average rating for the title. This is a numeric datatype.
+11. numVotes: the number of votes received for the title. This is a numeric datatype.
+12. director_name: The director name for the title. This is a character.
+
+## Director Based Analysis
+
+### 1. Movies
+
+```{r}
+movie_directors = movies |>
+  group_by(director_name) |>
+  summarise(number_of_movies = n()) |>
+  arrange(desc(number_of_movies))
+
+head(movie_directors,5)
+```
+
+Using the **`group_by()`** and **`summarise()`** functions we can find the number of movies directed by each director. Arranging the result using **`arrange()`,** we can see the top directors by the number of movies they have directed. This however might not be an actually way to compare the directors.
+
+Instead of just finding the count, we can use the same logic to find average ratings and total votes for each director. These give a better metric to rank the directors.
+
+```{r}
+movie_directors = movies |>
+  group_by(director_name) |>
+  summarise(ratings_avg = mean(averageRating),
+            votes_total = sum(numVotes),
+            number_of_movies = n()) |>
+  arrange(desc(number_of_movies),desc(ratings_avg))
+head(movie_directors)
+```
+
+This shows the popular directors along with their average ratings and the total votes across all of their movies. Now to get a good measure of what a good director is, we multiply the ratings by the total votes and divide the result by the number of movies they have directed to get a director score. Once we get a score, we sort the dataframe in descending order using that score using `arrange()`.
+
+```{r}
+movie_directors["director_score"] = 
+  movie_directors$ratings_avg *
+  movie_directors$votes_total / 
+  movie_directors$number_of_movies
+
+movie_directors |>
+  arrange(desc(director_score)) |>
+  head(5)
+```
+
+These are the top 5 movie directors ranked by their director score.
+
+#### Christopher Nolan Films
+
+Let us take a look at Christopher Nolan titles.
+
+```{r}
+christopher_nolan = movies |>
+  filter(director_name == "Christopher Nolan") |>
+  select(primaryTitle,averageRating,numVotes,runtimeMinutes,startYear)
+
+christopher_nolan
+```
+
+Christopher Nolan has directed 11 films in total. His first film was Memento and his latest film was Oppenheimer which was released in 2023.
+
+```{r}
+mean(christopher_nolan$runtimeMinutes)
+```
+
+The average run time for his films is 142.7273 minutes.
+
+#### **Popularity of Christopher Nolan films by Rating**
+
+We can plot a bar chart showing the average ratings for each movie. `reorder(primaryTitle, -averageRating)` is used to make sure the movie appear in order for highest to lowest by rating.
+
+```{r}
+ggplot(christopher_nolan, 
+       aes(x = reorder(primaryTitle, -averageRating), 
+           y = averageRating)) +
+  geom_bar(stat = "identity", fill = "lightblue", color = "black") +
+  labs(title = "Average Ratings for Christopher Nolan's Movies", 
+       x = "Movies", 
+       y = "Average Rating") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ylim(0, 11)
+```
+
+Looking at this bar chart, the most popular Christopher Nolan film by average ratings was the The Dark Knight with a rating of 9.0 followed by Inception and Interstellar.
+
+#### **Popularity by Number of Votes**
+
+We can also check the popularity of the films by the number of votes. Higher number of votes indicates more viewership.
+
+```{r}
+ggplot(christopher_nolan, 
+       aes(x = reorder(primaryTitle, -numVotes), 
+           y = numVotes)) +
+  geom_bar(stat = "identity", fill = "lightblue", color = "black") +
+  labs(title = "Total Votes of Christopher Nolan's Movies", 
+       x = "Movies", 
+       y = "Total Number of Votes") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+The top three films here remains the same with The Dark knight being the most popular, followed by Inception and Interstellar. However, The Dark Knight Rises beats The Prestige by having higher viewership.
+
+### 2. TV-Series
+
+We can do the same analysis for TV-Series to find the popular directors.
+
+```{r}
+tvSeries_directors = tvSeries |>
+  group_by(director_name) |>
+  summarise(ratings_avg = mean(averageRating),
+            votes_total = sum(numVotes),
+            number_of_series = n()) |>
+  arrange(desc(number_of_series),desc(ratings_avg))
+head(tvSeries_directors)
+```
+
+```{r}
+tvSeries_directors["director_score"] = 
+  tvSeries_directors$ratings_avg *
+  tvSeries_directors$votes_total / 
+  tvSeries_directors$number_of_series
+
+tvSeries_directors = tvSeries_directors |>
+  arrange(desc(director_score))
+
+head(tvSeries_directors)
+```
+
+Let us look at Michelle MacLaren. She has only one TV-Series but in terms of the ratings and popularity, she far outscores everyone else.
+
+```{r}
+tvSeries |>
+  filter(director_name == "Michelle MacLaren") |>
+  select(primaryTitle,averageRating,numVotes,startYear)
+```
+
+We can visualize the director scores for the top 5 TV-Series Directors.
+
+```{r}
+ggplot(tvSeries_directors[1:5,],
+       aes(x = reorder(director_name,-director_score), 
+           y = director_score)) + 
+  geom_bar(stat = "identity", fill = "lightgreen", color = "black") + 
+  labs(title = "Popular Directors",
+       x = "Director Name",
+       y = "Director Score")
+```
+
+## Popular Movies and TV-Series:
+
+### 1. Movies
+
+By using the average rating and the number of votes, we can calculate a movie score for each movie and arrange them in descending order using `arrange()`.
+
+```{r}
+movies["movie_score"] = movies$averageRating * movies$numVotes
+movies_top5 = movies |>
+  arrange(desc(movie_score)) |>
+  select(primaryTitle,movie_score)
+movies_top5$primaryTitle <- str_wrap(movies_top5$primaryTitle, width = 15)
+head(movies_top5,5)
+```
+
+These are the top 5 movies ranked by their movie scores.
+
+```{r}
+ggplot(movies_top5[1:5,],
+       aes(x = reorder(primaryTitle,-movie_score), 
+           y = movie_score)) + 
+geom_bar(stat = "identity", fill = "lightblue", color = "black") + 
+labs(title = "Popular Movies",
+     x = "Movie",
+     y = "Score")
+```
+
+### 2. TV-Series
+
+Now doing the same scoring for the TV-Series data.
+
+```{r}
+tvSeries["tvSeries_score"] = tvSeries$averageRating * tvSeries$numVotes
+tvSeries_top5 = tvSeries |>
+  arrange(desc(tvSeries_score)) |>
+  select(primaryTitle, tvSeries_score)
+head(tvSeries_top5,5)
+```
+
+These are the top 5 TV-Series ranked by their tvSeries scores.
+
+```{r}
+ggplot(tvSeries_top5[1:5,],
+       aes(x = reorder(primaryTitle,-tvSeries_score),
+           y = tvSeries_score)) + 
+geom_bar(stat = "identity", fill = "lightgreen", color = "black") + 
+labs(title = "Popular TV-Series",
+     x = "TV-Series",
+     y = "Score")
+```
+
+## Genre Based Analysis
+
+### 1. Movies
+
+The data has genre in the genres column. This sometimes has multiple values in it like Drama,Romance. We need to split the data into multiple rows for each genres for better analysis. **`str_split()`** is used followed by **`unnest()`** to get separate rows for each genre.
+
+```{r}
+genre_movies = movies |>
+  mutate(genres = str_split(movies$genres,",")) |>
+  unnest(genres)
+head(genre_movies,10)
+```
+
+```{r}
+genre_movies_count = genre_movies |>
+  group_by(genres) |>
+  summarise(genre_count = n()) |>
+  select(genres, genre_count) |>
+  arrange(desc(genre_count))
+
+head(genre_movies_count,5)
+```
+
+Once we have this data, based on the `genre_count`, we can see that the Drama genre is a popular genre by the number of drama titles in the dataset. But this doesn't automatically mean Drama is a well received genre. To get a better idea, we can calculate a genre score, taking into account the number of votes for the genre which indicates popularity and viewership along with the average ratings for the genre.
+
+We use **`group_by()`** and **`summarise()`** to achieve this and arrange the results by the genre_score.
+
+```{r}
+genre_movies_score = genre_movies |>
+  group_by(genres) |>
+  summarise(genre_count = n(),
+            avg_rating = mean(averageRating),
+            total_votes = sum(numVotes)) |>
+  select(genres, genre_count, avg_rating, total_votes)
+genre_movies_score["genre_score"] = 
+  genre_movies_score$avg_rating * 
+  genre_movies_score$total_votes / 
+  genre_movies_score$genre_count
+
+genre_movies_score = genre_movies_score |>
+  arrange(desc(genre_score))
+
+genre_movies_top10 = genre_movies_score[1:10,]
+genre_movies_top10
+```
+
+These are the top 10 most popular genres taking ratings and viewership into account. We can see the plot below. The most popular genres are Adventure, Sci-Fi, Action followed by Fantasy and Animation.
+
+```{r}
+ggplot(genre_movies_top10,
+       aes(x = reorder(genres,-genre_score), 
+           y = genre_score)) + 
+  geom_bar(stat = "identity", fill = "lightblue", color = "black") + 
+  labs(title = "Popular Genres",
+       x = "Genre",
+       y = "Score")
+```
+
+### 2. TV-Series
+
+We can do a similar analysis for the TV-Series dataset to see the popular genres.
+
+```{r}
+genre_tvSeries = tvSeries |>
+  mutate(genres = str_split(tvSeries$genres,",")) |>
+  unnest(genres)
+head(genre_tvSeries,10)
+```
+
+These are the top 5 genres by the genre_count.
+
+```{r}
+genre_tvSeries_count = genre_tvSeries |>
+  group_by(genres) |>
+  summarise(genre_count = n()) |>
+  select(genres, genre_count) |>
+  arrange(desc(genre_count))
+
+head(genre_tvSeries_count,5)
+```
+
+Now we can calculate the genre_score.
+
+```{r}
+genre_tvSeries_score = genre_tvSeries |>
+  group_by(genres) |>
+  summarise(genre_count = n(),
+            avg_rating = mean(averageRating),
+            total_votes = sum(numVotes)) |>
+  select(genres, genre_count, avg_rating, total_votes)
+
+genre_tvSeries_score["genre_score"] = 
+  genre_tvSeries_score$avg_rating * 
+  genre_tvSeries_score$total_votes / 
+  genre_tvSeries_score$genre_count
+
+genre_tvSeries_score = genre_tvSeries_score |>
+  arrange(desc(genre_score))
+
+genre_tvSeries_top10 = genre_tvSeries_score[1:10,]
+genre_tvSeries_top10
+```
+
+According to the scores, the genre Western is the most popular even though it only has 14 movies. This means that this genre is well received by the viewers with an average rating of 7.5 and a total votes of 446271 for just 14 titles. This is immediately followed by Horror, Crime, Mystery and Thriller.
+
+```{r}
+ggplot(genre_tvSeries_top10,
+       aes(x = reorder(genres,-genre_score), 
+           y = genre_score)) + 
+  geom_bar(stat = "identity", fill = "lightgreen", color = "black") + 
+  labs(title = "Popular Genres",
+       x = "Genre",
+       y = "Score")
+```
+
+## Genre Trend by Year
+
+### 1. Movies
+
+Lets take a look at the trend of the top 4 Genres over the year by plotting the genre-score against the year. We use `filter()` to get the top 4 genres. Since we have grouped the data by year and then by genre, we have to calculate the genre score again for each year across each group to get the genres scores by year to see the trend.
+
+When plotting we use `facet_wrap()` to split the chart for each genre.
+
+```{r}
+genre_movies_by_year = genre_movies |>
+  group_by(startYear, genres) |>
+  summarise(average_rating = mean(averageRating),
+            total_votes = sum(numVotes),
+            count = n()) |>
+  filter(genres == "Adventure" | 
+           genres == "Sci-Fi" | 
+           genres == "Action" | 
+           genres == "Fantasy")
+
+genre_movies_by_year["genre_score"] = 
+  genre_movies_by_year$average_rating * 
+  genre_movies_by_year$total_votes / 
+  genre_movies_by_year$count
+
+ggplot(genre_movies_by_year, 
+       aes(x = startYear, 
+           y = genre_score, 
+           color = genres, 
+           group = genres)) + 
+  geom_line() + 
+  geom_point() + 
+  facet_wrap(~ genres) + 
+  scale_x_discrete(
+    breaks = seq(2000,2024,by=5)
+  ) +
+  labs(
+    title = "Trend of Movie Genres score by year",
+    x = "Year",
+    y = "Score"
+  )
+```
+
+We see a downward trend for all the genres. This means that the titles from these genres are well received and more popular from the previous decade and that the quality of the movie production under these genres have reduced.
+
+### 2. TV-Series
+
+We can do a similar analysis for TV-Series genres. Since western has only 14 titles, we can take the next 4 popular genres to see the trend.
+
+```{r}
+genre_tvSeries_by_year = genre_tvSeries |>
+  group_by(startYear, genres) |>
+  summarise(average_rating = mean(averageRating),
+            total_votes = sum(numVotes),
+            count = n()) |>
+  filter(genres == "Sci-Fi" | 
+           genres == "Horror" | 
+           genres == "Crime" | 
+           genres == "Thriller")
+
+genre_tvSeries_by_year["genre_score"] = 
+  genre_tvSeries_by_year$average_rating * 
+  genre_tvSeries_by_year$total_votes / 
+  genre_tvSeries_by_year$count
+
+ggplot(genre_tvSeries_by_year, 
+       aes(x = startYear, 
+           y = genre_score, 
+           color = genres, 
+           group = genres)) + 
+  geom_line() + 
+  geom_point() + 
+  facet_wrap(~ genres) + 
+  scale_x_discrete(
+    breaks = seq(2000,2024,by=5)
+  ) +
+  labs(
+    title = "Trend of TV-Series Genres score by year",
+    x = "Year",
+    y = "Score"
+  )
+```
+
+The trend for the TV-Series genres are pretty consistent over the years with sudden spikes. For example, we see a peak around 2008-2009 for the thriller genre.
+
+## Runtime trends by year
+
+Lets take a look at the distribution of runtime for every 5 years starting from 2000 till 2024.
+
+```{r}
+movies_year_split = movies
+
+movies_year_split <- movies_year_split |>
+  mutate(
+    year_group = cut(as.numeric(as.character(startYear)), 
+                     breaks = c(1999,2005,2010,2015,2020,2025),
+                     labels = c("2000 - 2005",
+                                "2006 - 2010",
+                                "2011 - 2015",
+                                "2016 - 2020",
+                                "2021 - 2025")
+  ))
+movies_year_split = movies_year_split |>
+  filter(numVotes > 2000)
+```
+
+We use the `cut()` method to make a new column which tells which band of years does the title fall under. The columns has five values(bands) : "2000 - 2005", "2006 - 2010", "2011 - 2015", "2016 - 2020", "2021 - 2025". We are also filtering for movies with more than 2000 votes.
+
+Once we have this, we can plot the boxplots for run time vs band of year. We use `color = year_group` to have a separate color of the band of years.
+
+```{r}
+ggplot(movies_year_split, 
+       aes(x = year_group, 
+           y = runtimeMinutes, 
+           color = year_group)) + 
+  geom_boxplot()
+```
+
+Looking at the distribution, the run times have a lot of outliers but the overall distribution looks consistent over the years except for a few obvious outliers in 2016 - 2020.
+
+We can do the same distribution plots for the average rating.
+
+```{r}
+ggplot(movies_year_split, 
+       aes(x = year_group, 
+           y = averageRating, 
+           color = year_group)) + 
+  geom_boxplot() 
+```
+
+As before the plots look relatively the same throughout the years with a lot of outliers in the lower tail end of the distribution.
+
+# Task 2: R Package
+
+## Data explorer
+
+This section of the project uses `DataExplorer package (Cui B, 2024)` to automate data exploration and visualizations.
+
+Source: <https://cran.r-project.org/package=DataExplorer>
+
+```{r}
+citation("DataExplorer")
+```
+
+The **`DataExplorer`** package in R is a comprehensive tool designed to simplify the process of performing exploratory data analysis (EDA). It provides functions to quickly generate various reports and visualizations, allowing users to gain insights into the dataset in just a few lines of code. Let us use the `diamonds` dataset to showcase some features of this package.
+
+```{r}
+data("diamonds")
+```
+
+### 1. Data Summary
+
+To get a quick summary of the data we are using, we can use the `introduce()` and `plot_intro()` functions. We just have to pass the dataset and the functions will give us basic information about the dataset.
+
+```{r}
+introduce(diamonds)
+```
+
+`introduce()` gives basic information about the number of rows, number of columns and the tell you the count of the discrete and the continuous columns. Also gives the count of the total missing values and the total number of observations in the dataset.
+
+If we want to visualize this information, we can use `plot_intro()` function as below.
+
+```{r}
+plot_intro(diamonds)
+```
+
+We can see the same information as given by `introduce()` but in a graphical way. We can see 30% to 70% split between the discrete and the continuous columns in the dataset. None of the data is missing and we have 100% complete rows which is an indication of a clean dataset.
+
+### 2. Distributions
+
+Data explorer has variety of functions to plot the distribution for the variable with ease. Two such examples are showcased here. `plot_histogram()` plots the histograms for the different continuous variables. `plot_bar()` plots the bar chart distributions for the different continuous variables in the dataset.
+
+```{r}
+plot_histogram(diamonds)
+```
+
+```{r}
+plot_bar(diamonds)
+```
+
+We can choose to show the distribution of the variables with respect to another variable by using the `by` attribute in `plot_bar()`. For example, in the below chart, the data is visualized as a bar chart for the two variables cut and clarity while showing the distribution for each color.
+
+```{r}
+plot_bar(diamonds, by = "color") 
+```
+
+We can do a boxplot in similar way. `plot_boxplot()` plots the boxplots for all the variables showing the distribution with respect to the `by` attribute.
+
+```{r}
+plot_boxplot(diamonds, by="color")
+```
+
+### 3. Missing Values
+
+We can better visualize missing values for each variables using the `plot_missing()` function. The plot show that there are no missing values. This is an easy way to visualize the missing values in the each column.
+
+```{r}
+plot_missing(diamonds)
+```
+
+To the see the full effect of this plot better, let's take a sample dataframe to showcase.
+
+```{r}
+df = data.frame(
+  column1 = c(1,2,3,4),
+  column2 = c("Name1",NA,"Name3","Name4"),
+  column3 = c(NA,NA,2,NA),
+  column4 = c(1,2,NA,3)
+)
+
+plot_missing(df)
+```
+
+This is how the plot looks like when there are missing values in the dataframe. The columns are given band score based on how many values are missing so that it is easier to make a decision.
+
+# Task 3: Functions/Programming
+
+I am choosing to write a function which analyses the missing values in a dataframe. The function `analyse_missing_values()` takes a dataframe and returns a object of class `analyse_missing_values.`
+
+The class itself is configured to take in the necessary data which are used in the `print()`, `summary()`, and the `plot()` methods. For example, `percentage_of_complete_rows` is of type `numeric` and it is being used in the `plot()` function.
+
+```{r}
+#Defining the S4 class for analyse_missing_values
+setClass("analyse_missing_values",
+         slots = c(number_of_missing_values = "integer",
+                   percentage_of_missing_values = "numeric",
+                   column_wise_missing_values = "numeric",
+                   columns_with_missing_values = "character",
+                   columns_wise_missing_percentage = "numeric",
+                   number_of_fully_missing_columns = "integer",
+                   percentage_of_fully_missing_columns = "numeric",
+                   empty_column_names = "character",
+                   number_of_complete_rows = "numeric",
+                   percentage_of_complete_rows = "numeric",
+                   data = "data.frame"),
+         prototype = list(
+           number_of_missing_values = integer(),
+           percentage_of_missing_values = integer(),
+           column_wise_missing_values = numeric(),
+           columns_with_missing_values = character(),
+           columns_wise_missing_percentage = numeric(),
+           number_of_fully_missing_columns = integer(),
+           percentage_of_fully_missing_columns = integer(),
+           empty_column_names = character(),
+           number_of_complete_rows = numeric(),
+           percentage_of_complete_rows = numeric(),
+           data = data.frame()
+         ))
+
+#print() method
+setMethod("show","analyse_missing_values",
+          function(object){
+            cat("The number of NA values in the dataframe: ",
+                object@number_of_missing_values
+                )
+            cat("\n\nThe Columns with missing values are:",
+                object@columns_with_missing_values)
+            cat("\n\nCall summary() for more info")
+          })
+
+#summary() method
+setMethod("summary","analyse_missing_values",
+          function(object){
+            cat("\n\n----------------Summary----------------
+                \nCount of missing values by column:\n")
+            print(object@column_wise_missing_values)
+            cat("\n")
+            
+            cat("Percentage of missing values by column:\n")
+            print(object@columns_wise_missing_percentage)
+            cat("\n")
+            
+            cat("The number of fully empty columns:\n")
+            print(object@number_of_fully_missing_columns)
+            cat("\n")
+            
+            if(object@number_of_fully_missing_columns != 0){
+              cat("The names of fully empty columns:\n")
+              print(object@empty_column_names)
+              cat("\n")
+            }
+            
+            cat("The total number of complete rows:\n")
+            print(object@number_of_complete_rows)
+            cat("\n")
+          })
+
+#plot() method
+setMethod("plot","analyse_missing_values",
+          function(x){
+            missing_value_details = data.frame(
+              column_name = c("Missing Values",
+                              "Empty Columns",
+                              "Complete Rows"),
+              percentage = c(x@percentage_of_missing_values,
+                        x@percentage_of_fully_missing_columns,
+                        x@percentage_of_complete_rows)
+            )
+            
+            plot_missing_value_details = 
+              ggplot(missing_value_details, 
+                     aes(x = reorder(column_name, -percentage),
+                         y = percentage)) + 
+              geom_bar(stat = "identity", fill = "lightgreen") +
+              geom_text(aes(label = paste0(round(percentage, 2),"%")), 
+              vjust = 0,hjust = 1, size = 3.5, color = "black") +
+              labs(title = "Missing Data Details",
+                   x = "Metric",
+                   y = "Missing Percentage") +
+              theme_minimal() +
+              coord_flip() +
+              scale_y_continuous(limits = c(0, 100))
+            
+            print(plot_missing_value_details)
+            
+            missing_plot_df = data.frame(
+              column_name = names(x@columns_wise_missing_percentage),
+              percentage = x@columns_wise_missing_percentage
+            )
+            
+            plot_missing_percentage = 
+              ggplot(missing_plot_df, 
+                     aes(x = reorder(column_name, -percentage), 
+                         y = percentage)) + 
+              geom_bar(stat = "identity", fill = "lightgreen") +
+              geom_text(aes(label = paste0(round(percentage, 2),"%")), 
+              vjust = 0,hjust = 1, size = 3.5, color = "black") +
+              labs(title = "Percentage of Missing Data by Column",
+                   x = "Column",
+                   y = "Missing Percentage") +
+              theme_minimal() +
+              coord_flip() + 
+              scale_y_continuous(limits = c(0, 100))
+            
+            print(plot_missing_percentage)
+          })
+
+analyse_missing_values = function(data){
+  if(!is.data.frame(data)){
+    stop("The input must be a dataframe")
+  }
+  
+  number_of_missing_values = sum(is.na(data))
+  
+  percentage_of_missing_values = 
+    number_of_missing_values / (nrow(data) * ncol(data)) * 100
+
+  column_wise_missing_values = colSums(is.na(data))
+  
+  columns_with_missing_values = names(data)[column_wise_missing_values > 0]
+  
+  columns_wise_missing_percentage = column_wise_missing_values / nrow(data) * 100
+  
+  number_of_fully_missing_columns = sum(columns_wise_missing_percentage == 100)
+  
+  percentage_of_fully_missing_columns = 
+    number_of_fully_missing_columns / ncol(data) * 100
+  
+  empty_column_names = names(data)[columns_wise_missing_percentage == 100]
+  
+  number_of_complete_rows = sum(complete.cases(data))
+  
+  percentage_of_complete_rows = number_of_complete_rows / nrow(data) * 100
+
+  ret = new("analyse_missing_values",
+            number_of_missing_values = number_of_missing_values,
+            percentage_of_missing_values = percentage_of_missing_values,
+            column_wise_missing_values = column_wise_missing_values,
+            columns_with_missing_values = columns_with_missing_values,
+            columns_wise_missing_percentage = columns_wise_missing_percentage,
+            number_of_fully_missing_columns = number_of_fully_missing_columns,
+            percentage_of_fully_missing_columns = percentage_of_fully_missing_columns,
+            empty_column_names = empty_column_names,
+            number_of_complete_rows = number_of_complete_rows,
+            percentage_of_complete_rows = percentage_of_complete_rows,
+            data = data)
+  return(ret) 
+}
+```
+
+The output of the `print()`, `summary()` and the `plot()` functions are given below for the `airquality` dataset.
+
+```{r}
+data("airquality")
+missing_values = analyse_missing_values(airquality)
+missing_values
+summary(missing_values)
+plot(missing_values)
+```
