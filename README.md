@@ -10,4 +10,4 @@ Download the dataset from: https://drive.google.com/drive/folders/156UcxGQvCXe43
 - Download the ZIP file from the shared drive and extract its contents into your project folder.
 - In your R script or R console, set the working directory to the project folder using: setwd("path/to/your/project/folder").
 - Install the necessary R packages if they are not already installed.
-- Open and run the main R qmd file (Final Project.qmd) to execute the project.
+- Open and run the main R qmd file (Movie data analysis.qmd) to execute the project.
